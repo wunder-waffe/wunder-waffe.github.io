@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CUDA Library</title>
+    <style type="text/css">
+        body {
+            text-align: justify;
+            text-justify: inter-word;
+            background-color: #FFFFF0;
+            margin: 40px auto;
+            max-width: 1300px;
+            line-height: 1.6;
+            font-size: 16px;
+            color: #444;
+            padding: 0 10px;
+        }
+        h1, h2, h3 {
+            line-height: 1.2;
+        }
+    </style>
+</head>
+<body>
+    <a href="~/index.html">Homepage</a>
+    <h1 id="cuda-enabled-installation-of-aihwkit-using-docker">CUDA enabled installation of <code>aihwkit</code> using Docker</h1>
+    <p>Berkehan Ercan July 6 2023</p>
+    <p>Installing CUDA enabled version of aihwkit is not easy, as it requires the user to build the project from source. The <a href="https://aihwkit.readthedocs.io/en/latest/advanced_install.html">advanced installation guide</a> on the Read the Docs page of aihwkit documents various ways of compiling, building, and installing the package. Having tried all methods listed, I found out that the CUDA-enable Docker image is the easiest and most reliable way to install aihwkit. The regular installation seems to be outdated, as the newer GCC and G++ versions (11.x.x) fail to compile the source code. To compile, one has to downgrade the main compilers on their PC, which is a bad idea in a UNIX-based OS. I have tried to downgrade in both conda virtual-env and python virtual-env, and both have failed to compile the source.</p>
+    <p>The Dockerfile provided in the <a href="https://github.com/IBM/aihwkit">repository</a> also didn't work due to a few issues. Specifically, the file was still using the deprecated --install-option with pip, which caused errors with the newer versions of pip. However, I was able to modify the CUDA.Dockerfile. I changed the correct read-write permissions and used the setup.py method. Even though this method is discouraged in general, it worked. It's worth noting that these changes might be temporary and that future versions of the Dockerfile should seek to conform with the current best practices.</p>
+    <hr>
+    <h3 id="cuda-dockerfile"><code>CUDA.Dockerfile</code></h3>
+    <pre><code class="lang-python">
+# Build arguments
+ARG CUDA_VER=11.6.0
+ARG UBUNTU_VER=22.04
+
+# Download the base image
+FROM nvidia/cuda:${CUDA_VER}-devel-ubuntu${UBUNTU_VER}
+# you can check for all available images at https://hub.docker.com/r/nvidia/cuda/tags
+
+# Install as root
+USER root
+
+# Install dependencies
+RUN apt-get update && \
+    DEBIAN_FRONTEND="noninteractive" apt-get install --yes \
+    --no-install-recommends \
+    bash \
+    bash-completion \
+    cmake \
+    curl \
+    git \
+    libopenblas-dev \
+    linux-headers-$(uname -r) \
+    nano \
+    python3 python3-dev python3-pip python-is-python3 \
+    sudo \
+    wget && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Add a user `${USERNAME}` so that you're not developing as the `root` user
+ARG USERNAME=ibm
+ARG USERID=1000
+ARG GROUPID=1000
+RUN groupadd -g ${GROUPID} ${USERNAME} && \
+    useradd ${USERNAME} \
+    --create-home \
+    --uid ${USERID} \
+    --gid ${GROUPID} \
+    --shell=/bin/bash && \
+    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/nopasswd
+
+# Change to your user
+USER ${USERNAME}
+WORKDIR /home/${USERNAME}
+
+ARG PYTORCH_PIP_URL=https://download.pytorch.org/whl/cu117
+
+# Install python packages as your user
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir pybind11 scikit-build protobuf>=4.21.6 && \
+    pip install --no-cache-dir torch torchvision torchaudio --extra-index-url ${PYTORCH_PIP_URL} && \
+# Set path of python packages
+    echo 'export PATH=$HOME/.local/bin:$PATH' >> /home/${USERNAME}/.bashrc
+
+# Copy the source code inside to image and change to the source directory
+COPY . ./aihwkit
+WORKDIR /home/${USERNAME}/aihwkit
+
+# Default value for NVIDIA RTX A5000, find your own GPU model and replace it
+# use the k: https://developer.nvidia.com/cuda-gpus
+ARG CUDA_ARCH=86
+
+ENV USE_CUDA=ON
+ENV RPU_BLAS=OpenBLAS
+ENV RPU_CUDA_ARCHITECTURES=86
+
+RUN sudo chmod -R 777 /home/berkehan/aihwkit
+RUN echo "Detected CUDA_ARCHITECTURE is = ${CUDA_ARCH}"
+RUN python3 setup.py install --user
+# Build and install IBM aihwkit
+    </code></pre>
+    <hr>
+    <h3 id="modify-the-cuda-dockerfile">Modify the CUDA.Dockerfile</h3>
+    <p>I have installed the library on Linux Mint 21.1 with two RTX3090s, compute capability 86. Check your GPU compute capability number using <code>nvidia-smi</code> command. This number is crucial to the installation as we will pass this as a build option in dockerfile. Make sure that the nvidia drivers on your system are up-to-date. I have installed CUDA 11.6. Check your CUDA version with <code>nvcc --version</code> command. If you have a different CUDA installation on your system that you want to use,</p>
+    <ul>
+        <li>First check <code>which nvcc</code> to find which installation you are currently using.</li>
+        <li>Export the path of your desired installation to the <code>.bashrc</code> file.</li>
+        <li>Source the <code>.bashrc</code> file.</li>
+        <li>Check the version and path with <code>nvcc --version</code> and <code>which nvcc</code>.</li>
+    </ul>
+    <p>Beware that the CUDA Version stated in the <code>nvidia-smi</code> command is the newest version of CUDA that you <em>can</em> install on your system, not the version currently installed!</p>
+    <p>There are user-specific modifications required for the Dockerfile,</p>
+    <ol>
+        <li><code>CUDA_VER</code>: change this to your local machine CUDA version.</li>
+        <li><code>CUDA_ARCH</code>: change to your GPU's compute capability number.</li>
+        <li><code>RPU_CUDA_ARCHITECTURES</code>: change to your GPU's compute capability number.</li>
+        <li><code>RPU_BLAS=OpenBLAS</code>: leave as default as OpenBLAS will be installed as a dependency, can be changed to IntelMKL if dependencies are configured correctly.</li>
+        <li><code>sudo chmod -R 777 /home/berkehan/aihwkit</code>: change the path to your aihwkit folder path cloned from the GitHub Repository.</li>
+        <li><code>PYTORCH_PIP_URL=https://download.pytorch.org/whl/cu117</code>: the version can be changed after the build but should not be necessary as cu117 is backwards compatible with 11.6.</li>
+    </ol>
+    <h3 id="start-the-build">Start the Build</h3>
+    <p>We can start the build by executing the command:</p>
+    <pre><code class="lang-bash">
+sudo docker build --tag aihwkit:cuda
+ --build-arg USERNAME=${USER}
+ --build-arg USERID=$(id -u $USER)
+ --build-arg GROUPID=$(id -g $USER)
+ --no-cache
+ --file CUDA.Dockerfile .
+    </code></pre>
+    <p>The build takes a good 1-2 hours based on your system specifications.</p>
+    <p>The build should exit successfully with:</p>
+    <pre><code class="lang-bash">
+Using /home/berkehan/.local/lib/python3.10/site-packages
+Searching for cmake==3.26.4
+Best match: cmake 3.26.4
+Adding cmake 3.26.4 to easy-install.pth file
+Installing cmake script to /home/berkehan/.local/bin
+Installing cpack script to /home/berkehan/.local/bin
+Installing ctest script to /home/berkehan/.local/bin
+
+Using /home/berkehan/.local/lib/python3.10/site-packages
+Finished processing dependencies for aihwkit==0.7.1
+Removing intermediate container 09d1c338b637
+ ---> 72722cd0a4cc
+Successfully built 72722cd0a4cc
+Successfully tagged aihwkit:cuda
+    </code></pre>
+    <h3 id="configure-the-docker">Configure the Docker</h3>
+    <p>We can now start the Docker that we have built using the command:</p>
+    <pre><code class="lang-bash">
+sudo docker run -it aihwkit:cuda /bin/bash
+    </code></pre>
+    <p>We will be greeted with an error message from CUDA:</p>
+    <pre><code class="lang-bash">
+==========
+== CUDA ==
+==========
+
+CUDA Version 11.8.0
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+WARNING: The NVIDIA Driver was not detected.  GPU functionality will not be available.
+   Use the NVIDIA Container Toolkit to start this container with GPU support; see
+   https://docs.nvidia.com/datacenter/cloud-native/ .
+    </code></pre>
+    <h4 id="nvidia-container-toolkit">NVIDIA Container Toolkit</h4>
+    <p>The problem is that the Docker image that we have created cannot access the GPUs in our system, as it is an independent image. To allow the Docker to execute instructions on the GPUs, we have to install the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html">NVIDIA Container Toolkit</a>.</p>
+    <pre><code class="lang-bash">
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID) && \
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey |
+    sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
+    curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    </code></pre>
+    <p>If you are using Linux Mint as well, you have to change the distribution variable yourself as there is no package specifically for Mint. Because it is essentially Ubuntu, <code>export</code> the distribution variable as <code>ubuntu18.04</code>. Remove the distribution line from the command. Therefore:</p>
+    <pre><code class="lang-bash">
+export distribution=ubuntu18.04 && \
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey |
+    sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
+    curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    </code></pre>
+    <p>After setting the repos up, we can:</p>
+    <pre><code class="lang-bash">
+apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+    </code></pre>
+    <p>Now we can run the Docker image again, but with the extra option:</p>
+    <pre><code class="lang-bash">
+sudo docker run --gpus all -it aihwkit:cuda
+    </code></pre>
+    <p>The <code>--gpus all</code> option tells the Docker image to use all the GPUs on the system. If you want to only use a single GPU, change all with the ID of your desired GPU, found in <code>nvidia-smi</code> (such as 0, 1, etc.).</p>
+    <p>Now we should see:</p>
+    <pre><code class="lang-bash">
+==========
+== CUDA ==
+==========
+
+CUDA Version 11.8.0
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+    </code></pre>
+    <h3 id="test-the-installation">Test the Installation</h3>
+    <p>We can test whether both aihwkit and PyTorch are installed correctly and can utilize CUDA:</p>
+    <pre><code class="lang-bash">
+sudo docker run -it --gpus all aihwkit:cuda /bin/bash
+python3
+    </code></pre>
+    <pre><code class="lang-python">
+Python 3.10.6 (main, May 29 2023, 11:10:38) [GCC 11.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import torch
+>>> torch.cuda.is_available()
+True
+>>> from aihwkit.simulator.rpu_base import cuda
+>>> cuda.is_compiled()
+True
+>>>
+    </code></pre>
+    <h2 id="if-both-packages-return-true-the-installation-is-successful-and-aihwkit-can-utilize-the-cuda-cores-">If both packages return <code>True</code>, the installation is successful and aihwkit can utilize the CUDA cores.</h2>
+    <hr>
+
+
+
+    <footer>
+        <p>&copy; 2024 Berkehan Ercan.</p>
+        <p>This work is licensed under a <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA</a>.</p>
+    </footer>
+
+</body>
+</html>
