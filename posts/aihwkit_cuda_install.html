@@ -22,7 +22,7 @@
     </style>
 </head>
 <body>
-    <a href="~/index.html">Homepage</a>
+    <a href="index.html">Homepage</a>
     <h1 id="cuda-enabled-installation-of-aihwkit-using-docker">CUDA enabled installation of <code>aihwkit</code> using Docker</h1>
     <p>Berkehan Ercan July 6 2023</p>
     <p>Installing CUDA enabled version of aihwkit is not easy, as it requires the user to build the project from source. The <a href="https://aihwkit.readthedocs.io/en/latest/advanced_install.html">advanced installation guide</a> on the Read the Docs page of aihwkit documents various ways of compiling, building, and installing the package. Having tried all methods listed, I found out that the CUDA-enable Docker image is the easiest and most reliable way to install aihwkit. The regular installation seems to be outdated, as the newer GCC and G++ versions (11.x.x) fail to compile the source code. To compile, one has to downgrade the main compilers on their PC, which is a bad idea in a UNIX-based OS. I have tried to downgrade in both conda virtual-env and python virtual-env, and both have failed to compile the source.</p>
